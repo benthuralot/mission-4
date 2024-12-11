@@ -1,113 +1,102 @@
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 require("dotenv").config();
 
-class GeminiAPI {
+class GenAIService {
   constructor() {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not set in environment variables");
-    }
-
-    this.genAI = new GoogleGenerativeAI(apiKey);
+    this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     this.model = this.genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
     });
+
+    this.currentQuestionIndex = 0;
+    this.userResponses = [];
+    this.optedIn = false;
+    this.userName = 'User'; // Default name
+    this.maxQuestions = 10; // Limit the number of questions
+  }
+
+  setUserName(name) {
+    this.userName = name;
   }
 
   async startRecommendation() {
     try {
       const prompt = `
-        You are Tina, an AI insurance consultant. Your job is to recommend the best insurance policy for a user based on their answers to a series of questions.
+        You are Tina, an AI insurance consultant. Your job is to recommend the best insurance policy for ${this.userName} based on their answers to a series of questions.
 
-        Then proceed with questions, one at a time, to gather details such as:
-        - Do they need coverage for their car, third party only, or both?
-        - What type of vehicle do they own (e.g., car, truck, racing car)?
-        - How old is the vehicle?
-        
-        Based on their responses, recommend one of the following policies:
-        1. **Mechanical Breakdown Insurance (MBI)**: Not available for trucks or racing cars.
-        2. **Comprehensive Car Insurance**: Only available for vehicles less than 10 years old.
-        3. **Third Party Car Insurance**: Available for all vehicles.
-
-        For each recommendation, explain why it is the best choice.
-        
-        Start by asking the user: "I’m Tina. May I ask you a few personal questions to help recommend the best insurance policy for you?"
+        Start by introducing yourself:
+        "I’m Tina. I help you choose the right insurance policy. May I ask you a few personal questions to make sure I recommend the best policy for you?"
       `;
 
       const result = await this.model.generateContent(prompt);
       const firstQuestion = result.response.text();
 
-      return {
-        response: firstQuestion,
-        questionCount: 1,
-        userResponses: [],
-      };
+      return firstQuestion;
     } catch (error) {
-      console.error("Error starting recommendation:", error);
+      console.error('Error generating recommendation:', error);
       throw error;
     }
   }
 
-  async generateResponse(userInput, questionCount, userResponses) {
-    try {
-      if (!userInput || typeof userInput !== "string") {
-        throw new Error("Invalid user input: Must be a non-empty string");
-      }
-  
-      const nextQuestionCount = questionCount + 1;
-  
-      // Add the user's response to the history
-      userResponses.push({
-        questionNumber: questionCount,
-        response: userInput,
-      });
-  
-      let systemPrompt;
-  
-      // If Tina is still asking questions (not at recommendation yet)
-      if (nextQuestionCount <= 3) {
-        systemPrompt = `
-          You are Tina, an AI insurance consultant. Continue the conversation to gather details to recommend the best insurance policy. 
-          Here is the user's conversation history:
-          ${userResponses
-            .map(
-              (entry) =>
-                `Question ${entry.questionNumber}: ${entry.response}`
-            )
-            .join("\n")}
-  
-          Based on the above, ask the next relevant question.
-        `;
+  async getNextQuestion(userResponse) {
+    if (!this.optedIn) {
+      if (userResponse.toLowerCase().includes('yes')) {
+        this.optedIn = true;
+        return "Great! Let's get started. What do you need coverage for?";
       } else {
-        // Final recommendation logic
-        systemPrompt = `
-          You are Tina, an AI insurance consultant. Based on the user's answers:
-          ${userResponses
-            .map(
-              (entry) =>
-                `Question ${entry.questionNumber}: ${entry.response}`
-            )
-            .join("\n")}
-  
-          Recommend the best insurance policy. Provide a clear explanation of why it fits the user's needs.
-        `;
+        return "Thank you for your time. If you change your mind, feel free to ask for recommendations.";
       }
-  
-      // Generate a response
-      const result = await this.model.generateContent(systemPrompt);
-      const nextResponse = result.response.text();
-  
-      return {
-        response: nextResponse,
-        questionCount: nextQuestionCount,
-        userResponses,
-        isComplete: nextQuestionCount > 3, // Ends after 3 questions
-      };
+    }
+
+    this.userResponses.push(userResponse);
+
+    if (this.currentQuestionIndex < this.maxQuestions) {
+      const prompt = `
+        Based on the following responses from ${this.userName}:
+        ${this.userResponses.join('\n')}
+
+        Ask the next relevant question to uncover details to help identify which policy is better.
+      `;
+
+      try {
+        const result = await this.model.generateContent(prompt);
+        const nextQuestion = result.response.text();
+        this.currentQuestionIndex++;
+        return nextQuestion;
+      } catch (error) {
+        console.error('Error generating next question:', error);
+        throw error;
+      }
+    } else {
+      return await this.getRecommendation();
+    }
+  }
+
+  async getRecommendation() {
+    const prompt = `
+      Based on the following responses from ${this.userName}:
+      ${this.userResponses.join('\n')}
+
+      Do not explicitly say Based on the following responses from ${this.userName}: in the prompt. Instead, use the responses to generate a recommendation.
+
+      Recommend one or more of the following policies:
+      1. **Mechanical Breakdown Insurance (MBI)**: Not available for trucks or racing cars.
+      2. **Comprehensive Car Insurance**: Only available for vehicles less than 10 years old.
+      3. **Third Party Car Insurance**: Available for all vehicles.
+
+      For each recommendation, explain why it is the best choice. Give this recommendation to the user and do not refer to them by name.
+    `;
+
+    try {
+      const result = await this.model.generateContent(prompt);
+      const recommendation = result.response.text();
+
+      return recommendation;
     } catch (error) {
-      console.error("Error generating response:", error.message);
+      console.error('Error generating recommendation:', error);
       throw error;
     }
   }
-}  
+}
 
-module.exports = new GeminiAPI();
+module.exports = GenAIService;

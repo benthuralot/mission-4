@@ -1,24 +1,25 @@
-const GeminiAPI = require("../services/genAIService");
+const express = require('express');
+const router = express.Router();
+const GenAIService = require('../services/genAIService');
+const genAIService = new GenAIService();
 
-exports.chat = async (req, res) => {
-  const { userInput, questionCount, userResponses } = req.body;
-
+router.get('/start', async (req, res) => {
   try {
-    if (!questionCount || questionCount === 1) {
-      // Start the recommendation process
-      const result = await GeminiAPI.startRecommendation();
-      res.json(result);
-    } else {
-      // Generate the next response or final recommendation
-      const result = await GeminiAPI.generateResponse(
-        userInput,
-        questionCount,
-        userResponses
-      );
-      res.json(result);
-    }
+    const startMessage = await genAIService.startRecommendation();
+    res.json(startMessage);
   } catch (error) {
-    console.error("Error handling chat:", error.message);
-    res.status(500).json({ error: "An error occurred while processing your request." });
+    res.status(500).json({ error: 'Failed to start recommendation' });
   }
-};
+});
+
+router.post('/next', async (req, res) => {
+  const userResponse = req.body.message;
+  try {
+    const nextQuestion = await genAIService.getNextQuestion(userResponse);
+    res.json(nextQuestion);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to get next question' });
+  }
+});
+
+module.exports = router;
